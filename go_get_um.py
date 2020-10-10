@@ -6,6 +6,7 @@ OUTPUT_GRAY = 'output_images/gray.jpg'
 OUTPUT_EDGES = 'output_images/edges.jpg'
 OUTPUT_FINAL = 'output_images/houghlines3.jpg'
 
+# Rotate an image by an angle in degrees(?)
 def rotate(image, angle, center = None, scale = 1.0):
     (h, w) = image.shape[:2]
 
@@ -39,6 +40,8 @@ def seg_intersect(a1,a2,b1,b2):
         raise ValueError
     return (num / v)*db + b1
 
+# Takes a hough line and returns a tuple of points on the line
+# each point is a numpy array of two floats
 def points_from_hough_line(line):
     rho, theta = line
     a = np.cos(theta)
@@ -49,7 +52,7 @@ def points_from_hough_line(line):
     b1 = np.array( [float(x0 - 10000.0*(-b)), float(y0 - 10000.0*(a))] )
     return (a1, b1)
 
-
+# Given two sets of lines, return all intersection points of the two sets of lines
 def intersecting_points_from_lines(lines_a, lines_b):
     i = 0
     points = []
@@ -65,14 +68,10 @@ def intersecting_points_from_lines(lines_a, lines_b):
 
     return points
 
-
-def calc_image_rotation_angle(img):
-    # Figure out how much we need to rotate the image
-    img_r = rotate(img, 0)
-    gray = cv2.cvtColor(img_r, cv2.COLOR_BGR2GRAY)
-    edges = cv2.Canny(gray,50,100,apertureSize = 3)
-
-    lines = cv2.HoughLines(edges,1,np.pi/180,240)
+# Takes a preprocessed image and finds the angle to rotate the image such that most
+# lines are aligned horizontally
+def calc_image_rotation_angle(edges_img):
+    lines = cv2.HoughLines(edges_img,1,np.pi/180,240)
 
     avg_theta = sum([line[0][1] for line in lines])/len(lines)
 
@@ -88,16 +87,23 @@ def calc_image_rotation_angle(img):
     v = (np.pi - avg_theta_b) * (-180.0 / np.pi)
     return v
 
-def get_lines_from_img(img):
+# Takes an RGB image and prepares an image for detection
+def preprocess_img_for_hough(img):
     gray = cv2.cvtColor(img,cv2.COLOR_BGR2GRAY)
     cv2.imwrite(OUTPUT_GRAY, gray)
-    edges = cv2.Canny(gray,50,100,apertureSize = 3)
+    # _, threshold = cv2.threshold(gray, 100, 255, cv2.THRESH_BINARY)
+    edges = cv2.Canny(gray,100,150,apertureSize = 3)
     cv2.imwrite(OUTPUT_EDGES, edges)
+    return edges
 
-    lines = cv2.HoughLines(edges,1,np.pi/180,240)
+# Takes a preproccessed image and returns the verticle and horizontal lines of the image as a tuple
+def get_lines_from_img(edges_img):
+    lines = cv2.HoughLines(edges_img, 1, np.pi/180 ,200)
+    # print(lines)
+    # draw_lines(img, lines)
 
-    lines_a = [l for l in lines if l[0][1] < 0.1 and l[0][1] > -0.1]
-    lines_b = [l for l in lines if l[0][1] < np.pi * 0.55 and l[0][1] > np.pi * 0.45]
+    lines_a = [l for l in lines if (l[0][1] < np.pi * 0.05 and l[0][1] >= 0.0) or (l[0][1] > np.pi * 0.95 and l[0][1] <= np.pi)]
+    lines_b = [l for l in lines if l[0][1] < np.pi * 0.51 and l[0][1] > np.pi * 0.49]
     if len(lines_a) == 0 or len(lines_b) == 0:
         return (None, None)
 
@@ -107,6 +113,10 @@ def get_lines_from_img(img):
     print(avg_theta_a, avg_theta_b)
 
     return (lines_a, lines_b)
+
+def get_circles_from_img(edges_img):
+    circles = cv2.HoughCircles(edges_img,cv2.HOUGH_GRADIENT,0.9,20,param1=50,param2=30,minRadius=0,maxRadius=45)
+    return circles
 
 def draw_lines(img, lines):
     for line in lines:
@@ -122,20 +132,29 @@ def draw_points(img, points):
 
 def main():
     o_img = cv2.imread(INPUT_IMG)
-    v = calc_image_rotation_angle(o_img)
-    print(v)
+    edges_img = preprocess_img_for_hough(o_img)
+    #v = calc_image_rotation_angle(edges_img)
+    # print(v)
     img = o_img # rotate(o_img, v)
 
-    ver_lines, hor_lines = get_lines_from_img(img)
+    ver_lines, hor_lines = get_lines_from_img(edges_img)
 
-    if ver_lines:
-        draw_lines(img, ver_lines)
-    if hor_lines:
-        draw_lines(img, hor_lines)
+    # if ver_lines:
+    #     draw_lines(img, ver_lines)
+    # if hor_lines:
+    #     draw_lines(img, hor_lines)
 
     if hor_lines and ver_lines:
         points = intersecting_points_from_lines(ver_lines, hor_lines)
         draw_points(img, points)
+
+    circles = get_circles_from_img(edges_img)
+    circles = np.uint16(np.around(circles))
+    for i in circles[0,:]:
+        # draw the outer circle
+        # cv2.circle(img,(i[0],i[1]),i[2],(0,255,0),2)
+        # draw the center of the circle
+        cv2.circle(img,(i[0],i[1]),2,(0,0,255),3)
 
     cv2.imwrite(OUTPUT_FINAL, img)
     return 0
